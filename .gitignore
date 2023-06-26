@@ -37,6 +37,9 @@ build/
 # Clion config files
 .idea/*
 
+#Visual Studio files
+.vs/*
+
 libNeonCore/libNeonCorePy/\.idea/
 
 *.pyc
