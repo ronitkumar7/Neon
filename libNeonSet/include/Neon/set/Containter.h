@@ -67,6 +67,20 @@ struct Container
         -> Container;
 
     /**
+    * Factory function to create a Neon Reduction Container
+    */
+    template <Neon::Execution execution,
+              typename DataContainerT,
+              typename UserLoadingLambdaT>
+    static auto
+    Container::factoryReduction(const std::string&                                 name,
+                                Neon::set::internal::ContainerAPI::DataViewSupport dataViewSupport,
+                                const DataContainerT&                              a,
+                                const UserLoadingLambdaT&                          f,
+                                const index_3d&                                    blockSize,
+                                std::function<int(const index_3d& blockSize)>      shMemSizeFun) -> Container;
+
+    /**
      * Factory function to create a Neon Host Container
      */
     template <typename DataContainerT, typename UserLoadingLambdaT>

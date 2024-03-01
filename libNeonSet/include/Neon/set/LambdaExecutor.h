@@ -1,6 +1,7 @@
 #pragma once
 #include <functional>
 #include "Neon/set/ExecutionThreadSpan.h"
+#include <cub/cub.cuh>   // or equivalently <cub/device/device_radix_sort.cuh>
 
 namespace Neon::set::details {
 
@@ -33,6 +34,60 @@ NEON_CUDA_KERNEL auto launchLambdaOnSpanCUDA(typename DataSetContainer::Span spa
                                 threadIdx.y + blockIdx.y * blockDim.y,
                                 threadIdx.z + blockIdx.z * blockDim.z)) {
             userLambdaTa(e);
+        }
+    }
+}
+#endif
+
+
+
+#ifdef NEON_COMPILER_CUDA
+template <typename ReduceOp, typename T, typename DataSetContainer, typename UserLambda, uint_32t blockDimX, uint_32t blockDimY, uint_32t blockDimZ>
+NEON_CUDA_KERNEL auto launchLambdaOnSpanCUDAReduction(typename DataSetContainer::Span span,
+                                             UserLambda                      userLambdaTa,
+      ReduceOp reduce_op,
+                                                      T*                              mem)
+    -> void
+{
+    typename DataSetContainer::Idx e;
+    T                              partial;
+    if constexpr (DataSetContainer::executionThreadSpan == ExecutionThreadSpan::d1) {
+        if (span.setAndValidate(e,
+                                threadIdx.x + blockIdx.x * blockDim.x)) {
+            partial = userLambdaTa(e);
+        }
+    }
+    if constexpr (DataSetContainer::executionThreadSpan == ExecutionThreadSpan::d2) {
+        if (span.setAndValidate(e,
+                                threadIdx.x + blockIdx.x * blockDim.x,
+                                threadIdx.y + blockIdx.y * blockDim.y)) {
+            partial = userLambdaTa(e);
+        }
+    }
+    if constexpr (DataSetContainer::executionThreadSpan == ExecutionThreadSpan::d3) {
+        if (span.setAndValidate(e,
+                                threadIdx.x + blockIdx.x * blockDim.x,
+                                threadIdx.y + blockIdx.y * blockDim.y,
+                                threadIdx.z + blockIdx.z * blockDim.z)) {
+            partial = userLambdaTa(e);
+ 
+ 
+            typedef cub::BlockReduce<T, blockDimX,
+                                     cub::BLOCK_REDUCE_WARP_REDUCTIONS,
+                                     blockDimY,
+                                     blockDimZ>
+                                                         BlockReduce;
+            __shared__ typename BlockReduce::TempStorage temp_storage;
+            T                                            block_reduce = BlockReduce(temp_storage).Reduce(partial, reduce_op);
+
+            if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+                mem[blockIdx.x +
+                       blockIdx.y * gridDim.x +
+                       blockIdx.z * gridDim.x * gridDim.y] = block_reduce;
+            }
+            
+
+
         }
     }
 }

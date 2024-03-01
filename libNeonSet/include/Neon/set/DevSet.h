@@ -260,6 +260,56 @@ class DevSet
         }
     }
 
+    template <typename ReduceOp, typename T, typename DataSetContainer, typename Lambda>
+    inline auto launchLambdaOnSpanReduction(
+        Neon::Execution                       execution,
+        const Neon::set::KernelConfig&        kernelConfig,
+        DataSetContainer&                     dataSetContainer,
+        std::function<Lambda(SetIdx,
+                             Neon::DataView)> lambdaHolder,
+        Neon::PatternScalar<T>&               myReduction,
+        ReduceOp                              reduce,
+        uint_32t                              blockDimX,
+        uint_32t                              blockDimY,
+        uint_32t                              blockDimZ,
+        T init) const -> void
+    {
+        Neon::Runtime mode = kernelConfig.backend().runtime();
+        // ORDER is IMPORTANT
+        // KEEP OPENMP for last
+        switch (mode) {
+            case Neon::Runtime::stream: {
+                if (execution == Neon::Execution::device) {
+                    this->template helpLaunchLambdaOnSpanCUDAReduction<ReduceOp, T, DataSetContainer, Lambda>(kernelConfig,
+                                                                                        dataSetContainer,
+                                                                                        lambdaHolder,
+                                                                                         myReduction,
+                                                                                        reduce,
+                                                                                       blockDimX,
+                                                                                        blockDimY,
+                                                                                        blockDimZ,
+                                                                                        init);
+                    return;
+                }
+#if defined(NEON_OS_LINUX) || defined(NEON_OS_MAC)
+                [[fallthrough]];
+#endif
+            };
+            case Neon::Runtime::openmp: {
+                this->template helpLaunchLambdaOnSpanOMP<DataSetContainer, Lambda>(execution,
+                                                                                   kernelConfig,
+                                                                                   dataSetContainer,
+                                                                                   lambdaHolder);
+                return;
+            };
+            default: {
+                NeonException exception;
+                exception << "Unsupported configuration";
+                NEON_THROW(exception);
+            }
+        }
+    }
+
     template <typename DataSetContainer, typename Lambda>
     inline auto kernelDeviceLambdaWithIterator(
         Neon::Execution                       execution,
@@ -310,7 +360,7 @@ class DevSet
     {
         Neon::Runtime mode = Neon::Runtime::openmp;
         // ORDER is IMPORTANT
-        // KEEP OPENMP for last
+        // KEEP OPENMP for last`
         switch (mode) {
             case Neon::Runtime::openmp: {
                 this->template helpLaunchLambdaOnSpanOMP<DataSetContainer, Lambda>(Neon::Execution::host,
@@ -351,6 +401,62 @@ class DevSet
             }
         }
     }
+
+    template <typename ReduceOp, typename T, typename DataSetContainer, typename Lambda>
+    inline auto helpLaunchLambdaOnSpanCUDAReduction([[maybe_unused]] const Neon::set::KernelConfig&        kernelConfig,
+                                           [[maybe_unused]] DataSetContainer&                     dataSetContainer,
+                                                    
+                                           [[maybe_unused]] std::function<Lambda(SetIdx,
+                                                                                 Neon::DataView)> lambdaHolder,
+                                                    [[maybe_unused]] Neon::PatternScalar<T>&               myReduction,
+                                                    ReduceOp                                               reduce,
+                                                    [[maybe_unused]] T                                     init,
+                                                    uint_32t                                               blockDimX,
+                                                    uint_32t                                               blockDimY,
+                                                    uint_32t                                               blockDimZ)
+        const -> void
+    {
+        if (m_devType != Neon::DeviceType::CUDA) {
+            Neon::NeonException exp("DevSet");
+            exp << "Error, DevSet::invalid operation on a non GPU type of device.\n";
+            NEON_THROW(exp);
+        }
+#ifdef NEON_COMPILER_CUDA
+
+        const StreamSet&        gpuStreamSet = kernelConfig.streamSet();
+        const LaunchParameters& launchInfoSet = kernelConfig.launchInfoSet();
+        const int               nGpus = int(m_devIds.size());
+#pragma omp parallel num_threads(nGpus) default(shared) firstprivate(lambdaHolder)
+        {
+            Neon::SetIdx                setIdx(omp_get_thread_num());
+            const Neon::sys::GpuDevice& dev = Neon::sys::globalSpace::gpuSysObj().dev(m_devIds[setIdx.idx()]);
+            // std::tuple<funParametersType_ta& ...>argsForIthGpuFunction(parametersVec.at(i) ...);
+
+            auto   iterator = dataSetContainer.getSpan(Neon::Execution::device, setIdx.idx(), kernelConfig.dataView());
+            Lambda lambda = lambdaHolder(setIdx.idx(), kernelConfig.dataView());
+            void*  untypedParams[3] = {&iterator, &lambda, &myReduction.getmemry()};
+            void*  executor;
+            if constexpr (!details::ExecutionThreadSpanUtils::isBlockSpan(DataSetContainer::executionThreadSpan)) {
+                executor = (void*)Neon::set::details::denseSpan::launchLambdaOnSpanCUDAReduction<ReduceOp, T, DataSetContainer, Lambda, blockDimX, blockDimY, blockDimZ>;
+            } else {
+                executor = (void*)Neon::set::details::blockSpan::launchLambdaOnSpanCUDA<DataSetContainer, Lambda>;
+            }
+            dev.kernel.template cudaLaunchKernel<Neon::run_et::async>(gpuStreamSet[setIdx.idx()],
+                                                                      launchInfoSet[setIdx.idx()],
+                                                                      executor,
+                                                                      untypedParams);
+            myReduction.getBlasSet(kernelConfig.dataView()).getBlas(setIdx.idx()).reducePhase2(&myReduction.getmemry().getMemDev(idx), reduce, init);
+        }
+#else
+        NeonException exp("DevSet");
+        exp << "A lambda with CUDA device code must be compiled within a .cu file.";
+        NEON_THROW(exp);
+#endif
+
+        return;
+    }
+
+
 
     template <typename DataSetContainer, typename Lambda>
     inline auto helpLaunchLambdaOnSpanCUDA([[maybe_unused]] const Neon::set::KernelConfig&        kernelConfig,

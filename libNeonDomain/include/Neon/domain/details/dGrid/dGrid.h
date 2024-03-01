@@ -135,6 +135,27 @@ class dGrid : public Neon::domain::interface::GridBaseTemplate<dGrid, dIndex>
         const
         -> Neon::set::Container;
 
+
+
+        /**
+     * Creates a new container for reduction running on this grid
+     * 
+     * Look at Reduce function on https://nvlabs.github.io/cub/structcub_1_1_device_reduce.html#aa4adabeb841b852a7a5ecf4f99a2daeb
+     * to find structure for reduce_op functor
+     */
+    template <typename ReduceOp, typename T, Neon::Execution execution = Neon::Execution::device, 
+              typename LoadingLambda = void*>
+    auto newContainerReduction(const std::string& name,
+                     Neon::PatternScalar<T> &myReduction,
+                      LoadingLambda      lambda,
+                               ReduceOp                reduce,
+                               uint_32t                blockDimX,
+                               uint_32t                blockDimY,
+                               uint_32t                blockDimZ,
+                               T                       init)
+        const
+        -> Neon::set::Container;
+
     /**
      * Switch for different reduction engines.
      */

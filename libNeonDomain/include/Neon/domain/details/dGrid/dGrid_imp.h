@@ -232,6 +232,37 @@ auto dGrid::newContainer(const std::string& name,
     return c;
 }
 
+
+template <typename ReduceOp, typename T, Neon::Execution execution = Neon::Execution::device, typename LoadingLambda = void*>
+auto newContainerReduction(const std::string&      name,
+                           Neon::PatternScalar<T>& myReduction,
+                           LoadingLambda           lambda,
+                           ReduceOp                reduce,
+                           uint_32t                blockDimX,
+                           uint_32t                blockDimY,
+                           uint_32t                blockDimZ,
+                           T init)
+    const
+    -> Neon::set::Container
+{
+    const Neon::index_3d& defaultBlockSize = getDefaultBlock();
+    Neon::set::Container  c = Neon::set::Container::factoryReduction<ReduceOp, T, execution>(name,
+                                                                      Neon::set::internal::ContainerAPI::DataViewSupport::on,
+                                                                      *this,
+                                                                      lambda,
+                                                                      defaultBlockSize,
+                                                                      [](const Neon::index_3d&) { return 0; },
+                                                                        myReduction,
+        reduce,
+        blockDimX,
+        blockDimY,
+        blockDimZ,
+        init);
+    return c;
+}
+
+
+
 template <Neon::Execution execution,
           typename LoadingLambda>
 auto dGrid::newContainer(const std::string& name,

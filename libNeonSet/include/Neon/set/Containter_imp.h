@@ -51,6 +51,44 @@ auto Container::factory(const std::string&                                 name,
     NEON_THROW_UNSUPPORTED_OPERATION("Execution type not supported");
 }
 
+template<Neon::Execution execution, typename ReduceOp,
+    typename T,
+        typename DataContainerT,
+          typename UserLoadingLambdaT>
+auto Container::factoryReduction(const std::string&                                 name,
+                   Neon::set::internal::ContainerAPI::DataViewSupport dataViewSupport,
+                   const DataContainerT&                              a,
+                   const UserLoadingLambdaT&                          f,
+                   const index_3d&                                    blockSize,
+                   std::function<int(const index_3d& blockSize)>      shMemSizeFun,
+                   Neon::PatternScalar<T>&                            myReduction,
+                   ReduceOp                                           reduce,
+                   uint_32t                                           blockDimX,
+                   uint_32t                                           blockDimY,
+                   uint_32t                                           blockDimZ,
+    T init) -> Container
+{
+    using LoadingLambda = typename std::invoke_result<decltype(f), Neon::set::Loader&>::type;
+    if constexpr (Neon::Execution::device == execution) {
+        auto k = new Neon::set::internal::DeviceContainerReduction<DataContainerT, LoadingLambda>(name,
+                                                                                         execution, dataViewSupport,
+                                                                                         a, f,
+                                                                                         blockSize, shMemSizeFun,
+                                                                                         myReduction, reduce, blockDimX, blockDimY, blockDimZ, init);
+
+        std::shared_ptr<Neon::set::internal::ContainerAPI> tmp(k);
+        return {tmp};
+    } else {
+        auto k = new Neon::set::internal::HostContainer<DataContainerT, LoadingLambda>(name, dataViewSupport,
+                                                                                       a, f,
+                                                                                       blockSize, shMemSizeFun);
+
+        std::shared_ptr<Neon::set::internal::ContainerAPI> tmp(k);
+        return {tmp};
+    }
+    NEON_THROW_UNSUPPORTED_OPERATION("Execution type not supported");
+}
+
 template <typename DataContainerT, typename UserLoadingLambdaT>
 auto Container::hostFactory(const std::string&                                 name,
                             Neon::set::internal::ContainerAPI::DataViewSupport dataViewSupport,
